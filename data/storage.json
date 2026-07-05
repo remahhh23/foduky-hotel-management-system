@@ -1,0 +1,51 @@
+{
+  "jarash_room_types": [
+    {
+      "id": "id_1783257183183",
+      "name": "kjhgf",
+      "description": "",
+      "maxGuests": 1,
+      "amenities": []
+    }
+  ],
+  "jarash_settings_users": [
+    {
+      "id": "usr_seed_admin",
+      "username": "admin",
+      "password": "39c43b7d",
+      "displayName": "مدير النظام",
+      "role": "مدير",
+      "active": true,
+      "createdAt": "2026-07-05T13:14:40.971Z"
+    }
+  ],
+  "jarash_auth": {
+    "accessToken": "dev-token",
+    "refreshToken": "dev-refresh",
+    "expiresAt": "2026-07-06T13:19:06.179Z",
+    "user": {
+      "id": "usr_seed_admin",
+      "username": "admin",
+      "email": "admin@jarash.com",
+      "fullName": "مدير النظام",
+      "role": "مدير"
+    }
+  },
+  "jarash_attendance_employees": [
+    {
+      "id": "emp_1783258834822",
+      "code": "11",
+      "name": "سبييبس",
+      "department": "إدارة",
+      "pin": "",
+      "isActive": true,
+      "createdAt": "2026-07-05T13:41:05.522Z",
+      "credentialId": null,
+      "credentialPublicKey": null,
+      "credentialAlgorithm": null,
+      "workStart": "08:00",
+      "workEnd": "16:00",
+      "zkEnrolled": false
+    }
+  ]
+}

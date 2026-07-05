@@ -1,15 +1,19 @@
 import { logger } from "./logger";
 import { attendanceRecordService, employeeService } from "@/pages/attendance/attendanceService";
 
-const BRIDGE_PORT = 5174;
-const BRIDGE_URL = `http://${typeof window !== "undefined" ? window.location.hostname : "localhost"}:${BRIDGE_PORT}`;
+const PROXY_PATH = "/api/zk";
+function getBaseUrl() {
+  const host = typeof window !== "undefined" ? window.location.hostname : "localhost";
+  const port = typeof window !== "undefined" ? window.location.port : "";
+  return `http://${host}${port ? ":" + port : ""}${PROXY_PATH}`;
+}
 
 let eventSource: EventSource | null = null;
 let onAttendanceCallback: ((data: { userId: string; timestamp: string; date: string }) => void) | null = null;
 
 async function fetchApi(path: string, options?: RequestInit) {
   try {
-    const res = await fetch(`${BRIDGE_URL}${path}`, {
+    const res = await fetch(`${getBaseUrl()}${path}`, {
       ...options,
       headers: { "Content-Type": "application/json", ...options?.headers },
     });
@@ -97,7 +101,7 @@ export const zkBridgeService = {
     if (eventSource) {
       eventSource.close();
     }
-    eventSource = new EventSource(`${BRIDGE_URL}/api/realtime`);
+    eventSource = new EventSource(`${getBaseUrl()}/api/realtime`);
 
     eventSource.onmessage = (e) => {
       try {

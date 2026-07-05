@@ -7,8 +7,6 @@ import {
   Plus,
   Pencil,
   Trash2,
-  LogIn,
-  LogOut,
   ShieldCheck,
   X,
   Download,
@@ -69,10 +67,6 @@ export default function AttendancePage() {
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
   const [todayRecord, setTodayRecord] = useState<AttendanceRecord | null>(null);
   const [selectedEmpId, setSelectedEmpId] = useState("");
-  const [pinInput, setPinInput] = useState("");
-  const [showPinDialog, setShowPinDialog] = useState(false);
-  const [pinAction, setPinAction] = useState<"checkin" | "checkout" | null>(null);
-  const [pinError, setPinError] = useState("");
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [chainStatus, setChainStatus] = useState<{ valid: boolean; checking: boolean }>({ valid: true, checking: false });
@@ -100,7 +94,7 @@ export default function AttendancePage() {
   /* Employee form */
   const [showEmpForm, setShowEmpForm] = useState(false);
   const [editEmpId, setEditEmpId] = useState<string | null>(null);
-  const [empForm, setEmpForm] = useState({ code: "", name: "", department: "", pin: "", workStart: "08:00", workEnd: "16:00" });
+  const [empForm, setEmpForm] = useState({ code: "", name: "", department: "", workStart: "08:00", workEnd: "16:00" });
   const [empFormError, setEmpFormError] = useState("");
 
   const loadData = useCallback(() => {
@@ -123,59 +117,6 @@ export default function AttendancePage() {
     setTimeout(() => setMessage(null), 4000);
   }
 
-  /* ── PIN Dialog ── */
-  function requestPin(empId: string, action: "checkin" | "checkout") {
-    setSelectedEmpId(empId);
-    setPinInput("");
-    setPinError("");
-    setPinAction(action);
-    setShowPinDialog(true);
-  }
-
-  async function confirmPin() {
-    if (!pinInput || !selectedEmpId || !pinAction) return;
-    setSaving(true);
-    setPinError("");
-    try {
-      const valid = await employeeService.verifyPin(selectedEmpId, pinInput);
-      if (!valid) { setPinError("رقم التعريف الشخصي غير صحيح"); setSaving(false); return; }
-      setShowPinDialog(false);
-      if (pinAction === "checkin") {
-        const r = await attendanceRecordService.checkIn(selectedEmpId, "pin");
-        showMsg("success", `تم تسجيل دخول ${r.employeeName} الساعة ${getTime(r.checkIn)}`);
-      } else {
-        const r = await attendanceRecordService.checkOut(selectedEmpId, "pin");
-        if (r) showMsg("success", `تم تسجيل خروج ${r.employeeName} الساعة ${getTime(r.checkOut)}`);
-      }
-      loadData();
-    } catch (err: any) {
-      setPinError(err?.message || "فشلت العملية");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  /* ── Biometric ── */
-  async function handleBiometric(empId: string, action: "checkin" | "checkout") {
-    setSaving(true);
-    try {
-      const ok = await employeeService.verifyBiometric(empId);
-      if (!ok) { showMsg("error", "فشل التحقق بالبصمة"); setSaving(false); return; }
-      if (action === "checkin") {
-        const r = await attendanceRecordService.checkIn(empId, "fingerprint");
-        showMsg("success", `تم تسجيل دخول ${r.employeeName} الساعة ${getTime(r.checkIn)}`);
-      } else {
-        const r = await attendanceRecordService.checkOut(empId, "fingerprint");
-        if (r) showMsg("success", `تم تسجيل خروج ${r.employeeName} الساعة ${getTime(r.checkOut)}`);
-      }
-      loadData();
-    } catch (err: any) {
-      showMsg("error", err?.message || "فشلت العملية");
-    } finally {
-      setSaving(false);
-    }
-  }
-
   /* ── Verify Chain ── */
   async function handleVerifyChain() {
     setChainStatus((s) => ({ ...s, checking: true }));
@@ -193,6 +134,37 @@ export default function AttendancePage() {
     loadData();
     setChainStatus({ valid: true, checking: false });
     showMsg("success", "تم إصلاح سلسلة التوثيق");
+  }
+
+  /* ── WebAuthn — بصمة الجوال ── */
+  async function handleWebAuthnCheckIn(empId: string) {
+    setSaving(true);
+    try {
+      const ok = await employeeService.verifyBiometric(empId);
+      if (!ok) { showMsg("error", "فشل التحقق بالبصمة"); setSaving(false); return; }
+      const r = await attendanceRecordService.checkIn(empId, "fingerprint");
+      showMsg("success", `تم تسجيل دخول ${r.employeeName} الساعة ${getTime(r.checkIn)}`);
+      loadData();
+    } catch (err: any) {
+      showMsg("error", err?.message || "فشلت العملية");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleWebAuthnCheckOut(empId: string) {
+    setSaving(true);
+    try {
+      const ok = await employeeService.verifyBiometric(empId);
+      if (!ok) { showMsg("error", "فشل التحقق بالبصمة"); setSaving(false); return; }
+      const r = await attendanceRecordService.checkOut(empId, "fingerprint");
+      if (r) showMsg("success", `تم تسجيل خروج ${r.employeeName} الساعة ${getTime(r.checkOut)}`);
+      loadData();
+    } catch (err: any) {
+      showMsg("error", err?.message || "فشلت العملية");
+    } finally {
+      setSaving(false);
+    }
   }
 
   /* ── Filtered Records ── */
@@ -233,7 +205,7 @@ export default function AttendancePage() {
       getTime(r.checkIn),
       getTime(r.checkOut),
       ATTENDANCE_STATUS_LABELS[r.status],
-      r.method === "fingerprint" ? "بصمة" : r.method === "pin" ? "PIN" : "يدوي",
+      r.method === "zk-fingerprint" || r.method === "fingerprint" ? "بصمة" : "يدوي",
     ]);
     downloadCSV(headers, rows, `تقرير_الحضور_${reportFrom}_${reportTo}`);
     showMsg("success", "تم تصدير التقرير بنجاح");
@@ -242,14 +214,14 @@ export default function AttendancePage() {
   /* ── Employee CRUD ── */
   function openNewEmployee() {
     setEditEmpId(null);
-    setEmpForm({ code: "", name: "", department: DEPARTMENTS[0], pin: "", workStart: "08:00", workEnd: "16:00" });
+    setEmpForm({ code: "", name: "", department: DEPARTMENTS[0], workStart: "08:00", workEnd: "16:00" });
     setEmpFormError("");
     setShowEmpForm(true);
   }
 
   function openEditEmployee(emp: Employee) {
     setEditEmpId(emp.id);
-    setEmpForm({ code: emp.code, name: emp.name, department: emp.department, pin: "", workStart: emp.workStart || "08:00", workEnd: emp.workEnd || "16:00" });
+    setEmpForm({ code: emp.code, name: emp.name, department: emp.department, workStart: emp.workStart || "08:00", workEnd: emp.workEnd || "16:00" });
     setEmpFormError("");
     setShowEmpForm(true);
   }
@@ -257,26 +229,22 @@ export default function AttendancePage() {
   async function saveEmployee() {
     setEmpFormError("");
     if (!empForm.code.trim() || !empForm.name.trim()) { setEmpFormError("الرجاء تعبئة جميع الحقول المطلوبة"); return; }
-    if (!editEmpId && !empForm.pin) { setEmpFormError("الرجاء إدخال رقم التعريف الشخصي (PIN)"); return; }
     setSaving(true);
     try {
       if (editEmpId) {
-        const updateData: any = {
+        await employeeService.update(editEmpId, {
           code: empForm.code.trim(),
           name: empForm.name.trim(),
           department: empForm.department,
           workStart: empForm.workStart,
           workEnd: empForm.workEnd,
-        };
-        if (empForm.pin) updateData.pin = empForm.pin;
-        await employeeService.update(editEmpId, updateData);
+        });
         showMsg("success", "تم تحديث بيانات الموظف");
       } else {
         await employeeService.create({
           code: empForm.code.trim(),
           name: empForm.name.trim(),
           department: empForm.department,
-          pin: empForm.pin,
           workStart: empForm.workStart,
           workEnd: empForm.workEnd,
         });
@@ -303,26 +271,6 @@ export default function AttendancePage() {
     loadData();
   }
 
-  async function registerBiometric(empId: string) {
-    setSaving(true);
-    try {
-      await employeeService.registerBiometric(empId);
-      loadData();
-      showMsg("success", "تم تسجيل بصمة Windows Hello بنجاح");
-    } catch (err: any) {
-      showMsg("error", err?.message || "فشل تسجيل البصمة");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function removeBiometric(empId: string, empName: string) {
-    if (!confirm(`هل أنت متأكد من إزالة بصمة "${empName}"؟`)) return;
-    employeeService.removeBiometric(empId);
-    loadData();
-    showMsg("success", "تم إزالة البصمة");
-  }
-
   /* ── Render: Check-in view ── */
   function renderCheckIn() {
     const activeEmps = employees.filter((e) => e.isActive);
@@ -347,33 +295,30 @@ export default function AttendancePage() {
 
         {selectedEmpId && !todayRecord?.checkIn && (
           <div className="space-y-3">
-            <p className="text-center text-xs text-slate-500">اختر طريقة تسجيل الدخول</p>
-            <div className="flex gap-3">
-              <Button onClick={() => handleBiometric(selectedEmpId, "checkin")} disabled={saving || !employeeService.hasBiometric(selectedEmpId)}
-                className="flex-1 gap-2">
-                <Fingerprint className="h-4 w-4" /> بصمة
+            {employeeService.hasBiometric(selectedEmpId) && (
+              <Button onClick={() => handleWebAuthnCheckIn(selectedEmpId)} disabled={saving}
+                className="w-full gap-2 py-6 text-lg">
+                <Fingerprint className="h-6 w-6" /> بصمة الجوال — تسجيل دخول
               </Button>
-              <Button onClick={() => requestPin(selectedEmpId, "checkin")} disabled={saving} className="flex-1 gap-2" variant="secondary">
-                <LogIn className="h-4 w-4" /> PIN
-              </Button>
-            </div>
-            {!employeeService.hasBiometric(selectedEmpId) && (
-              <p className="text-center text-xs text-amber-500">لم يتم تسجيل بصمة لهذا الموظف — استخدم PIN</p>
             )}
+            <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4 text-center">
+              <p className="text-xs text-amber-300">أو استخدم جهاز البصمة الخارجي (ZKTeco)</p>
+              <p className="mt-1 text-xs text-slate-500">اذهب إلى تبويب "جهاز البصمة" وشغّل المراقبة الحية</p>
+            </div>
           </div>
         )}
 
         {selectedEmpId && todayRecord?.checkIn && !todayRecord.checkOut && (
           <div className="space-y-3">
-            <p className="text-center text-xs text-slate-500">اختر طريقة تسجيل الخروج</p>
-            <div className="flex gap-3">
-              <Button onClick={() => handleBiometric(selectedEmpId, "checkout")} disabled={saving || !employeeService.hasBiometric(selectedEmpId)}
-                className="flex-1 gap-2">
-                <Fingerprint className="h-4 w-4" /> بصمة
+            {employeeService.hasBiometric(selectedEmpId) && (
+              <Button onClick={() => handleWebAuthnCheckOut(selectedEmpId)} disabled={saving}
+                className="w-full gap-2 py-6 text-lg">
+                <Fingerprint className="h-6 w-6" /> بصمة الجوال — تسجيل خروج
               </Button>
-              <Button onClick={() => requestPin(selectedEmpId, "checkout")} disabled={saving} className="flex-1 gap-2" variant="secondary">
-                <LogOut className="h-4 w-4" /> PIN
-              </Button>
+            )}
+            <div className="rounded-xl border border-sky-500/20 bg-sky-500/5 p-4 text-center">
+              <p className="text-xs text-sky-300">أو استخدم جهاز البصمة الخارجي (ZKTeco)</p>
+              <p className="mt-1 text-xs text-slate-500">ضع إصبعك على جهاز البصمة لتسجيل الانصراف</p>
             </div>
           </div>
         )}
@@ -398,7 +343,7 @@ export default function AttendancePage() {
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-400">طريقة التسجيل</span>
-                <span className="text-white">{todayRecord.method === "fingerprint" ? "بصمة" : "PIN"}</span>
+                <span className="text-white">بصمة</span>
               </div>
             </div>
           </div>
@@ -481,7 +426,7 @@ export default function AttendancePage() {
                       {ATTENDANCE_STATUS_LABELS[r.status]}
                     </span>
                   </td>
-                  <td className="p-3 text-slate-400 text-xs">{r.method === "fingerprint" ? "بصمة" : r.method === "pin" ? "PIN" : "يدوي"}</td>
+                  <td className="p-3 text-slate-400 text-xs">{r.method === "zk-fingerprint" || r.method === "fingerprint" ? "بصمة" : "يدوي"}</td>
                 </tr>
               ))}
             </tbody>
@@ -712,13 +657,14 @@ export default function AttendancePage() {
                 <th className="p-3 text-right text-xs font-medium text-slate-400">القسم</th>
                 <th className="p-3 text-right text-xs font-medium text-slate-400">المدة</th>
                 <th className="p-3 text-center text-xs font-medium text-slate-400">جهاز البصمة</th>
+                <th className="p-3 text-center text-xs font-medium text-slate-400">بصمة الجوال</th>
                 <th className="p-3 text-right text-xs font-medium text-slate-400">الحالة</th>
                 <th className="p-3 text-left text-xs font-medium text-slate-400">إجراءات</th>
               </tr>
             </thead>
             <tbody>
               {employees.length === 0 && (
-                <tr><td colSpan={7} className="p-8 text-center text-slate-500">لا يوجد موظفون</td></tr>
+                <tr><td colSpan={8} className="p-8 text-center text-slate-500">لا يوجد موظفون</td></tr>
               )}
               {employees.map((emp) => (
                 <tr key={emp.id} className="border-b border-white/5 hover:bg-white/5 transition-colors">
@@ -735,6 +681,21 @@ export default function AttendancePage() {
                       <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium border border-slate-600 text-slate-500">
                         <XCircle className="h-3 w-3" /> غير مسجلة
                       </span>
+                    )}
+                  </td>
+                  <td className="p-3 text-center">
+                    {employeeService.hasBiometric(emp.id) ? (
+                      <div className="flex items-center justify-center gap-1">
+                        <span className="text-xs text-green-400 border border-green-500/30 bg-green-500/10 rounded-full px-2 py-0.5">مسجلة</span>
+                        <button onClick={() => handleRemoveBiometric(emp.id, emp.name)}
+                          className="text-xs text-red-400 hover:text-red-300 ml-1" title="إزالة البصمة">✕</button>
+                      </div>
+                    ) : (
+                      <button onClick={() => handleRegisterBiometric(emp.id)}
+                        disabled={saving}
+                        className="rounded-lg bg-sky-600/60 px-2 py-1 text-xs text-white hover:bg-sky-600 transition-colors disabled:opacity-50">
+                        {saving ? "..." : "تسجيل"}
+                      </button>
                     )}
                   </td>
                   <td className="p-3">
@@ -760,6 +721,31 @@ export default function AttendancePage() {
         </div>
       </div>
     );
+  }
+
+  /* ── WebAuthn — تسجيل/إزالة بصمة الجوال ── */
+  async function handleRegisterBiometric(empId: string) {
+    setSaving(true);
+    try {
+      await employeeService.registerBiometric(empId);
+      loadData();
+      showMsg("success", "تم تسجيل بصمة الجوال بنجاح");
+    } catch (err: any) {
+      showMsg("error", err?.message || "فشل تسجيل البصمة");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleRemoveBiometric(empId: string, empName: string) {
+    if (!confirm(`هل أنت متأكد من إزالة بصمة "${empName}"؟`)) return;
+    try {
+      await employeeService.removeBiometric(empId);
+      loadData();
+      showMsg("success", "تم إزالة بصمة الجوال");
+    } catch (err: any) {
+      showMsg("error", err?.message || "فشلت العملية");
+    }
   }
 
   /* ── ZK Device ── */
@@ -790,7 +776,7 @@ export default function AttendancePage() {
       }
     } catch (pingErr) {
       // سيرفر البصمة نفسه غير شغال
-      showMsg("error", `❌ سيرفر البصمة غير شغال!\n\nشغّله أولاً في نافذة PowerShell منفصلة:\ncd src/Jarash.Web\nnode server/zk-bridge.mjs`);
+      showMsg("error", `❌ سيرفر البصمة غير شغال!\n\nسيرفر البصمة يشتغل تلقائياً مع:\nnode serve.cjs\n\nأعد تشغيل السيرفر الرئيسي، أو شغّله منفصلاً:\ncd src/Jarash.Web\nnode server/zk-bridge.mjs`);
       setZkSyncing(false);
       return;
     }
@@ -806,7 +792,7 @@ export default function AttendancePage() {
     } catch (err) {
       const msg = (err?.message || "");
       if (msg.includes("ZK_BRIDGE")) {
-        showMsg("error", `❌ سيرفر البصمة غير شغال!\n\nشغّله أولاً:\nnode server/zk-bridge.mjs`);
+        showMsg("error", `❌ سيرفر البصمة غير شغال!\n\nأعد تشغيل السيرفر الرئيسي:\nnode serve.cjs`);
       } else {
         showMsg("error", msg || "فشل الاتصال ببروتوكول ZK — راجع تعليمات الصفحة");
       }
@@ -1067,43 +1053,6 @@ export default function AttendancePage() {
     );
   }
 
-  /* ── PIN Dialog ── */
-  function renderPinDialog() {
-    if (!showPinDialog) return null;
-    const emp = employees.find((e) => e.id === selectedEmpId);
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setShowPinDialog(false)}>
-        <div className="mx-4 w-full max-w-sm rounded-2xl border border-white/10 bg-card-bg p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-          <div className="mb-4 flex items-center justify-between">
-            <h3 className="text-lg font-bold text-white">التحقق من الهوية</h3>
-            <button onClick={() => setShowPinDialog(false)} className="text-slate-400 hover:text-white transition-colors">
-              <X className="h-5 w-5" />
-            </button>
-          </div>
-          <p className="mb-4 text-sm text-slate-400">
-            {pinAction === "checkin" ? `تسجيل دخول: ${emp?.name}` : `تسجيل خروج: ${emp?.name}`}
-          </p>
-          <div className="mb-4 flex justify-center">
-            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-sky-500/20 text-sky-400">
-              <Fingerprint className="h-8 w-8" />
-            </div>
-          </div>
-          <input type="password" value={pinInput} onChange={(e) => setPinInput(e.target.value)}
-            placeholder="أدخل رقم التعريف الشخصي"
-            onKeyDown={(e) => { if (e.key === "Enter") confirmPin(); }}
-            className="mb-2 w-full rounded-xl border border-white/20 bg-white/5 px-4 py-3 text-center text-lg font-mono tracking-widest text-white outline-none placeholder:text-slate-500 focus:border-sky-500" autoFocus dir="ltr" />
-          {pinError && <p className="mb-2 text-xs text-red-400">{pinError}</p>}
-          <div className="flex gap-2">
-            <Button onClick={confirmPin} disabled={saving || !pinInput} className="flex-1">
-              {saving ? "جاري التحقق..." : "تأكيد"}
-            </Button>
-            <Button type="button" variant="outline" onClick={() => setShowPinDialog(false)}>إلغاء</Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   /* ── Employee Form Dialog ── */
   function renderEmpFormDialog() {
     if (!showEmpForm) return null;
@@ -1129,15 +1078,17 @@ export default function AttendancePage() {
                   className="w-full rounded-xl border border-white/20 bg-white/5 px-4 py-2.5 text-sm text-white outline-none focus:border-sky-500 font-mono" dir="ltr" />
               </div>
             </div>
-            <div>
-              <label className="mb-1 block text-xs text-slate-400">رقم التعريف الشخصي (اتركه فارغاً إن لم ترد تغييره)</label>
-              <input type="password" value={empForm.pin} onChange={(e) => setEmpForm((p) => ({ ...p, pin: e.target.value }))}
-                className="w-full rounded-xl border border-white/20 bg-white/5 px-4 py-2.5 text-sm text-white outline-none focus:border-sky-500" dir="ltr" />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs text-slate-400">الاسم *</label>
-              <input value={empForm.name} onChange={(e) => setEmpForm((p) => ({ ...p, name: e.target.value }))}
-                className="w-full rounded-xl border border-white/20 bg-white/5 px-4 py-2.5 text-sm text-white outline-none focus:border-sky-500" />
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 block text-xs text-slate-400">الاسم *</label>
+                <input value={empForm.name} onChange={(e) => setEmpForm((p) => ({ ...p, name: e.target.value }))}
+                  className="w-full rounded-xl border border-white/20 bg-white/5 px-4 py-2.5 text-sm text-white outline-none focus:border-sky-500" />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-slate-400">الكود *</label>
+                <input value={empForm.code} onChange={(e) => setEmpForm((p) => ({ ...p, code: e.target.value }))}
+                  className="w-full rounded-xl border border-white/20 bg-white/5 px-4 py-2.5 text-sm text-white outline-none focus:border-sky-500 font-mono" dir="ltr" />
+              </div>
             </div>
             <div>
               <label className="mb-1 block text-xs text-slate-400">القسم</label>
@@ -1145,13 +1096,6 @@ export default function AttendancePage() {
                 className="w-full rounded-xl border border-white/20 bg-white/5 px-4 py-2.5 text-sm text-white outline-none focus:border-sky-500">
                 {DEPARTMENTS.map((d) => <option key={d} value={d}>{d}</option>)}
               </select>
-            </div>
-            <div>
-              <label className="mb-1 block text-xs text-slate-400">
-                {editEmpId ? "رقم التعريف الشخصي (اتركه فارغاً إن لم ترد تغييره)" : "رقم التعريف الشخصي (PIN) *"}
-              </label>
-              <input type="password" value={empForm.pin} onChange={(e) => setEmpForm((p) => ({ ...p, pin: e.target.value }))}
-                className="w-full rounded-xl border border-white/20 bg-white/5 px-4 py-2.5 text-sm text-white outline-none focus:border-sky-500" dir="ltr" />
             </div>
             {empFormError && <p className="text-xs text-red-400">{empFormError}</p>}
             <div className="flex gap-2 pt-2">
@@ -1204,7 +1148,6 @@ export default function AttendancePage() {
         {view === "device" && renderDevice()}
       </div>
 
-      {renderPinDialog()}
       {renderEmpFormDialog()}
     </div>
   );

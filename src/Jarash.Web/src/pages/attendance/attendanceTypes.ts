@@ -21,7 +21,7 @@ export interface Employee {
 
 export type AttendanceStatus = "present" | "absent" | "late" | "half-day";
 
-export type RecordMethod = "fingerprint" | "pin" | "manual" | "zk-fingerprint";
+export type RecordMethod = "fingerprint" | "manual" | "zk-fingerprint";
 
 export interface AttendanceRecord {
   id: string;

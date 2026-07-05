@@ -1,6 +1,26 @@
 import { logger } from "@/lib/logger";
-import { hashPassword, verifyPassword } from "@/lib/crypto";
+import { hashPassword } from "@/lib/crypto";
 import type { Employee, AttendanceRecord, AttendanceStatus, RecordMethod } from "./attendanceTypes";
+
+/* ── WebAuthn helpers ── */
+
+function ab2b64(buf: ArrayBuffer): string {
+  return btoa(String.fromCharCode(...new Uint8Array(buf)));
+}
+
+function b642ab(b64: string): ArrayBuffer {
+  return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)).buffer;
+}
+
+function randomChallenge(): Uint8Array {
+  const arr = new Uint8Array(32);
+  crypto.getRandomValues(arr);
+  return arr;
+}
+
+function isWebAuthnAvailable(): boolean {
+  return typeof window !== "undefined" && !!navigator?.credentials?.create;
+}
 
 const KEYS = {
   employees: "jarash_attendance_employees",
@@ -74,7 +94,7 @@ export const employeeService = {
   async create(data: { code: string; name: string; department: string; pin?: string; workStart?: string; workEnd?: string }): Promise<Employee> {
     const items = this.getAll();
     if (items.some((e) => e.code === data.code)) throw new Error(`رقم الموظف ${data.code} موجود مسبقاً`);
-    const hashedPin = await hashPassword(data.pin || "1234");
+    const hashedPin = data.pin ? await hashPassword(data.pin) : "";
     const employee: Employee = {
       id: nextId("emp"),
       code: data.code,
@@ -121,10 +141,87 @@ export const employeeService = {
     return true;
   },
 
-  async verifyPin(employeeId: string, pin: string): Promise<boolean> {
-    const employee = this.getById(employeeId);
-    if (!employee) return false;
-    return verifyPassword(pin, employee.pin);
+  /* ── WebAuthn (بصمة الجوال/الكمبيوتر) ── */
+
+  hasBiometric(employeeId: string): boolean {
+    const emp = this.getById(employeeId);
+    return !!emp?.credentialId;
+  },
+
+  async registerBiometric(employeeId: string): Promise<void> {
+    const emp = this.getById(employeeId);
+    if (!emp) throw new Error("الموظف غير موجود");
+    if (!isWebAuthnAvailable()) throw new Error("المتصفح لا يدعم البصمة — استخدم HTTPS أو متصفح حديث");
+
+    const challenge = randomChallenge();
+    const userId = new TextEncoder().encode(emp.id);
+
+    const pubKeyCredential = await navigator.credentials.create({
+      publicKey: {
+        rp: { id: window.location.hostname, name: "Jarash Hotel" },
+        user: {
+          id: userId,
+          name: emp.code,
+          displayName: emp.name,
+        },
+        challenge,
+        pubKeyCredParams: [{ type: "public-key", alg: -7 }],
+        authenticatorSelection: {
+          authenticatorAttachment: "platform",
+          userVerification: "required",
+          residentKey: "preferred",
+        },
+        timeout: 60000,
+      },
+    }) as PublicKeyCredential | null;
+
+    if (!pubKeyCredential) throw new Error("لم يتم تسجيل البصمة");
+
+    const response = pubKeyCredential.response as AuthenticatorAttestationResponse;
+    const credentialId = ab2b64(pubKeyCredential.rawId);
+    const publicKey = response.getPublicKey()
+      ? ab2b64(response.getPublicKey()!)
+      : "";
+    const algorithm = response.getPublicKeyAlgorithm();
+
+    await employeeService.update(emp.id, {
+      credentialId,
+      credentialPublicKey: publicKey,
+      credentialAlgorithm: algorithm,
+    });
+
+    logger.info("attendance: biometric registered", { employeeId: emp.id, name: emp.name });
+  },
+
+  async verifyBiometric(employeeId: string): Promise<boolean> {
+    const emp = this.getById(employeeId);
+    if (!emp) throw new Error("الموظف غير موجود");
+    if (!emp.credentialId) throw new Error("لا توجد بصمة مسجلة");
+    if (!isWebAuthnAvailable()) throw new Error("المتصفح لا يدعم البصمة");
+
+    const challenge = randomChallenge();
+    const credentialId = b642ab(emp.credentialId);
+
+    const assertion = await navigator.credentials.get({
+      publicKey: {
+        challenge,
+        allowCredentials: [{ id: credentialId, type: "public-key" }],
+        userVerification: "required",
+        timeout: 60000,
+      },
+    }) as PublicKeyCredential | null;
+
+    if (!assertion) return false;
+    return true;
+  },
+
+  async removeBiometric(employeeId: string): Promise<void> {
+    await employeeService.update(employeeId, {
+      credentialId: null,
+      credentialPublicKey: null,
+      credentialAlgorithm: null,
+    });
+    logger.info("attendance: biometric removed", { employeeId });
   },
 
   getNextUid(): number {
