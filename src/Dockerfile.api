@@ -1,0 +1,21 @@
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /src
+COPY ["Jarash.Api/Jarash.Api.csproj", "Jarash.Api/"]
+COPY ["Jarash.Infrastructure/Jarash.Infrastructure.csproj", "Jarash.Infrastructure/"]
+COPY ["Jarash.Core/Jarash.Core.csproj", "Jarash.Core/"]
+RUN dotnet restore "Jarash.Api/Jarash.Api.csproj"
+COPY . .
+WORKDIR "/src/Jarash.Api"
+RUN dotnet build "Jarash.Api.csproj" -c Release -o /app/build
+
+FROM build AS publish
+RUN dotnet publish "Jarash.Api.csproj" -c Release -o /app/publish
+
+FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS final
+WORKDIR /app
+EXPOSE 80
+ENV ASPNETCORE_URLS=http://+:80
+ENV Database__Provider=PostgreSQL
+ENV Cors__Origin=http://localhost:80
+COPY --from=publish /app/publish .
+ENTRYPOINT ["dotnet", "Jarash.Api.dll"]
